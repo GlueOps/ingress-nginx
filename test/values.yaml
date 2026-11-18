@@ -1,0 +1,120 @@
+# Mirrors the nginx values in GlueOps/platform-helm-chart-platform
+# (templates/application-nginx-public.yaml). Deliberate differences, because the
+# smoke test runs on a bare single-node k3d cluster:
+#   - no metrics.serviceMonitor (no ServiceMonitor CRD)
+#   - proxy protocol off
+#   - replicaCount 1
+#   - the image is set by smoke.sh
+#   - no service annotations (cloud load balancer, DNS) and no kubeadm nodeSelector
+#   - no registry overrides for images the chart does not render with these values
+controller:
+  image:
+    digest: ""
+  admissionWebhooks:
+    enabled: false
+  replicaCount: 1
+  maxUnavailable: 1
+  config:
+    use-forwarded-headers: true
+    ssl-reject-handshake: true
+    log-format-upstream: '{
+      "time_iso8601": "$time_iso8601",
+      "msec": "$msec",
+      "remote_addr": "$remote_addr",
+      "request": "$request",
+      "proxy_protocol_addr": "$proxy_protocol_addr",
+      "x_forwarded_for": "$proxy_add_x_forwarded_for",
+      "req_id": "$req_id",
+      "remote_user": "$remote_user",
+      "bytes_sent": $bytes_sent,
+      "request_time": $request_time,
+      "status": $status,
+      "body_bytes_sent": "$body_bytes_sent",
+      "host": "$host",
+      "server_protocol": "$server_protocol",
+      "uri": "$uri",
+      "args": "$args",
+      "request_length": $request_length,
+      "proxy_upstream_name": "$proxy_upstream_name",
+      "proxy_alternative_upstream_name": "$proxy_alternative_upstream_name",
+      "upstream_addr": "$upstream_addr",
+      "upstream_response_length": "$upstream_response_length",
+      "upstream_response_time": "$upstream_response_time",
+      "upstream_status":"$upstream_status",
+      "request_method": "$request_method",
+      "http_referer": "$http_referer",
+      "namespace": "$namespace",
+      "ingress_name": "$ingress_name",
+      "service_name": "$service_name",
+      "service_port": "$service_port",
+      "http_host": "$http_host",
+      "scheme": "$scheme",
+      "server_name": "$server_name",
+      "upstream_cache_status": "$upstream_cache_status",
+      "request_id": "$request_id",
+      "ssl_protocol": "$ssl_protocol",
+      "ssl_cipher": "$ssl_cipher",
+      "http_user_agent": "$http_user_agent"
+      }'
+  extraArgs:
+    # No such secret here: the controller warns and serves its built-in certificate.
+    default-ssl-certificate: glueops-core-cert-manager/smoke-test
+    update-status-on-shutdown: "false"
+  service:
+    labels:
+      use-as-loadbalancer: "public"
+    type: "LoadBalancer"
+    externalTrafficPolicy: "Local"
+  updateStrategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  lifecycle:
+    preStop:
+      exec:
+        command: ["/bin/sh", "-c", "sleep 240; /wait-shutdown"]
+  metrics:
+    enabled: true
+  electionID: public-ingress-nginx-leader
+  ingressClassByName: true
+  ingressClass: public
+  ingressClassResource:
+    name: public
+    enabled: true
+    default: false
+    controllerValue: "k8s.io/public-ingress-nginx"
+  tolerations:
+    - key: "dedicated"
+      operator: "Equal"
+      value: "public"
+      effect: "NoSchedule"
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - ingress-nginx
+                - key: app.kubernetes.io/instance
+                  operator: In
+                  values:
+                    - public-ingress-nginx
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - controller
+            topologyKey: kubernetes.io/hostname
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      nodeTaintsPolicy: Honor
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/instance: public-ingress-nginx
+          app.kubernetes.io/component: controller
